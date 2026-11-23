@@ -11,6 +11,8 @@ MD / TXT -> as-is
 
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
 import re
 from collections import Counter
@@ -193,7 +195,10 @@ def clean_pages(pages: list[Page], strip_headers_footers: bool = True) -> list[P
         text = re.sub(r"[ \t]+\n", "\n", text)
         text = re.sub(r"\n{3,}", "\n\n", text)
         text = re.sub(r"(\w)-\n(\w)", r"\1\2", text)  # de-hyphenate line breaks
-        text = text.replace(" ", " ").replace("ﬁ", "fi").replace("ﬂ", "fl")
+        text = text.replace("\u00a0", " ").replace("\ufb01", "fi").replace("\ufb02", "fl")
+        # icon-font bullets / unmapped glyphs come out as U+FFFD or private-use code points
+        text = re.sub("[\ufffd\ue000-\uf8ff]", "", text)
+        text = re.sub(r"^([ \t]*[-*\u2022])[ \t]{2,}", r"\1 ", text, flags=re.MULTILINE)
         cleaned.append(Page(number=p.number, text=text.strip()))
     return cleaned
 
@@ -201,22 +206,60 @@ def clean_pages(pages: list[Page], strip_headers_footers: bool = True) -> list[P
 def _guess_title(path: Path, pages: list[Page]) -> str:
     for p in pages[:3]:
         for ln in p.text.splitlines():
-            s = ln.strip().lstrip("#").strip().strip("*").strip()
+            s = re.sub(r"\*\*|__|`", "", ln.strip().lstrip("#")).strip(" *_")
+            s = re.sub(r"\s{2,}", " ", s)
             if 8 <= len(s) <= 120 and re.search(r"[A-Za-z]{3}", s) and "annual" in s.lower():
                 return s
     return re.sub(r"[_-]+", " ", path.stem).strip()
 
 
-def ingest_file(path: Path, root: Path, cfg_ing) -> Document:
+EXTRACT_CACHE_VERSION = 1
+
+
+def file_sha256(path: Path) -> str:
+    """Content hash, so the cache survives copies/zips/Drive uploads that change timestamps."""
+    h = hashlib.sha256()
+    with open(path, "rb") as fh:
+        for block in iter(lambda: fh.read(1 << 20), b""):
+            h.update(block)
+    return h.hexdigest()
+
+
+def _extract_raw(path: Path, cfg_ing) -> list[Page]:
     ext = path.suffix.lower()
     if ext == ".pdf":
-        pages = _pdf_pages(path, cfg_ing.get("pdf_engine", "auto"))
-    elif ext == ".docx":
-        pages = _docx_pages(path)
-    elif ext in (".html", ".htm"):
-        pages = _html_pages(path)
-    else:
-        pages = _text_pages(path)
+        return _pdf_pages(path, cfg_ing.get("pdf_engine", "auto"))
+    if ext == ".docx":
+        return _docx_pages(path)
+    if ext in (".html", ".htm"):
+        return _html_pages(path)
+    return _text_pages(path)
+
+
+def _extract_cached(path: Path, cfg_ing, cache_dir: Path | None) -> list[Page]:
+    """Raw extraction is the slow part (minutes for a 600-page PDF) - cache it per file version."""
+    if cache_dir is None:
+        return _extract_raw(path, cfg_ing)
+    key = stable_hash(file_sha256(path), cfg_ing.get("pdf_engine", "auto"), EXTRACT_CACHE_VERSION, n=20)
+    cf = cache_dir / f"{key}.json"
+    if cf.exists():
+        try:
+            data = json.loads(cf.read_text(encoding="utf-8"))
+            log.info("  using cached extraction for %s", path.name)
+            return [Page(number=d["n"], text=d["t"]) for d in data]
+        except Exception:  # corrupt cache -> re-extract
+            pass
+    pages = _extract_raw(path, cfg_ing)
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    tmp = cf.with_suffix(".tmp")
+    tmp.write_text(json.dumps([{"n": p.number, "t": p.text} for p in pages], ensure_ascii=False), encoding="utf-8")
+    tmp.replace(cf)
+    return pages
+
+
+def ingest_file(path: Path, root: Path, cfg_ing, cache_dir: Path | None = None) -> Document:
+    ext = path.suffix.lower()
+    pages = _extract_cached(path, cfg_ing, cache_dir)
     raw_chars = sum(len(p.text) for p in pages)
     pages = clean_pages(pages, cfg_ing.get("strip_headers_footers", True))
     pages = [p for p in pages if p.text.strip()]
@@ -235,21 +278,40 @@ def ingest_file(path: Path, root: Path, cfg_ing) -> Document:
         )
     rel = path.relative_to(root).as_posix()
     text_all = "\n".join(p.text for p in pages)
+    meta = {"pages": n_pages, "chars": len(text_all), "bytes": path.stat().st_size, "type": ext.lstrip(".")}
+    if ext == ".pdf":
+        meta["outline"] = pdf_outline(path)
     return Document(
         doc_id=stable_hash(rel, len(text_all), text_all[:2000], n=16),
         filename=rel,
         title=_guess_title(path, pages),
         pages=pages,
-        meta={"pages": n_pages, "chars": len(text_all), "bytes": path.stat().st_size, "type": ext.lstrip(".")},
+        meta=meta,
     )
 
 
-def run_ingestion(input_dir: Path, cfg_ing, project_root: Path, out_dir: Path) -> list[Document]:
+def pdf_outline(path: Path) -> list[list]:
+    """PDF bookmarks as [level, title, page] (used by the ToC-aware JSON chunker); [] if none."""
+    try:
+        import pymupdf as fitz
+    except ImportError:  # pragma: no cover
+        import fitz
+    try:
+        with fitz.open(path) as doc:
+            return [[int(lvl), str(title), int(page)] for lvl, title, page, *_ in doc.get_toc(simple=True)]
+    except Exception as exc:  # pragma: no cover - depends on PDF
+        log.debug("could not read the outline of %s: %s", path.name, exc)
+        return []
+
+
+def run_ingestion(
+    input_dir: Path, cfg_ing, project_root: Path, out_dir: Path, cache_dir: Path | None = None
+) -> list[Document]:
     root, files = discover_inputs(input_dir, cfg_ing["extensions"], project_root)
     docs = []
     for f in files:
         log.info("Extracting %s …", f.name)
-        doc = ingest_file(f, root, cfg_ing)
+        doc = ingest_file(f, root, cfg_ing, cache_dir)
         docs.append(doc)
         md_path = out_dir / f"{Path(doc.filename).stem}.md"
         md_path.parent.mkdir(parents=True, exist_ok=True)

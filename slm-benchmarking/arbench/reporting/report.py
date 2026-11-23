@@ -90,7 +90,7 @@ def model_report(model: str, ctx: dict, chart_path: Path | None) -> str:
     )
     L.append(
         f"**Benchmark:** {ctx['bench_title']} · {ctx['n_questions']} questions → {ctx['n_items']} eval items · "
-        f"run `{ctx['run_name']}` · profile `{ctx['profile']}`\n"
+        f"run `{ctx['run_name']}` · profile `{ctx['profile']}` · chunking `{ctx.get('chunking', 'packed')}`\n"
     )
     L.append("## Headline\n")
     L.append(
@@ -268,7 +268,8 @@ def comparison_report(ctx: dict, chart_paths: dict[str, Path]) -> str:
     L: list[str] = []
     L.append("# SLM Comparison — Annual-Report Benchmark (ARBench)\n")
     L.append(
-        f"**Document:** {ctx['bench_title']} ({ctx['doc_pages']} pages, {ctx['n_chunks']} chunks) · "
+        f"**Document:** {ctx['bench_title']} ({ctx['doc_pages']} pages, {ctx['n_chunks']} chunks, "
+        f"chunking `{ctx.get('chunking', 'packed')}`) · "
         f"**Benchmark:** {ctx['n_questions']} validated questions → {ctx['n_items']} eval items · "
         f"**Judging:** {ctx['judge_desc']} · **Run:** `{ctx['run_name']}` ({ctx['profile']} profile) · "
         f"**Ollama:** {ctx['ollama_version']} · **Host:** {ctx['host']}\n"

@@ -69,6 +69,9 @@ def validate(cfg: Config) -> None:
             raise ValueError("config: every model needs a `name` (an Ollama tag such as qwen3:4b-instruct)")
         m.setdefault("label", m["name"])
     ch = cfg["chunking"]
+    ch.setdefault("strategy", "packed")
+    if ch["strategy"] not in {"packed", "toc_json"}:
+        raise ValueError("config: chunking.strategy must be packed | toc_json")
     if not 0 <= ch["overlap_tokens"] < ch["target_tokens"] <= ch["max_tokens"]:
         raise ValueError("config: require 0 <= overlap_tokens < target_tokens <= max_tokens")
     strategy = cfg["judge"]["strategy"]

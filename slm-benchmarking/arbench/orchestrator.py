@@ -27,6 +27,7 @@ from arbench.llm.ollama_client import OllamaClient
 from arbench.pipeline.chunk import Chunk, run_chunking
 from arbench.pipeline.filter import run_filtering
 from arbench.pipeline.generate import run_generation
+from arbench.pipeline.json_chunk import run_json_chunking
 from arbench.pipeline.ingest import run_ingestion
 from arbench.pipeline.summarize import summarize
 from arbench.pipeline.verify import run_verification
@@ -80,6 +81,13 @@ def _chunks_from_rows(rows: list[dict]) -> list[Chunk]:
     return [Chunk(**r) for r in rows]
 
 
+CHUNKING_DESC = {
+    "packed": "structure-aware packing of paragraphs/tables into flat text chunks",
+    "toc_json": "ToC-structured JSON chunks (sections from the report's table of contents; models read JSON)",
+    "toc_json_text_context": "A/B control: the toc_json benchmark, but models read the same chunks as flat text",
+}
+
+
 def benchmark_card(ctx: dict) -> str:
     bs = ctx["bench_stats"]
     return f"""# Annual-Report Benchmark — card
@@ -87,6 +95,7 @@ def benchmark_card(ctx: dict) -> str:
 **Source document(s):** {', '.join(ctx['doc_files'])}
 **Title:** {ctx['bench_title']} · {ctx['doc_pages']} pages · {ctx['n_chunks']} usable chunks
 **Created:** {ctx['created']} with ARBench {__version__} (profile `{ctx['profile']}`)
+**Chunking:** `{ctx.get('chunking', 'packed')}` - {CHUNKING_DESC.get(ctx.get('chunking', 'packed'), '')}
 
 ## Contents
 - `questions.jsonl` — {bs['kept']} validated questions (kind: {bs['kept_by_kind']})
@@ -157,12 +166,22 @@ def run(cfg: Config, run_name: str | None = None, reuse_benchmark: str | None = 
     else:
         # ---------------------------------------------------------- 1 ingestion
         with timer("1 · Ingestion (extract text from the annual report)"):
-            docs = run_ingestion(resolve_path(cfg["input_dir"]), cfg["ingestion"], PROJECT_ROOT, run_dir / "01_extracted")
+            extract_cache = resolve_path(cfg["cache_path"]).parent / "extracted" if cfg.get("cache_path") else None
+            docs = run_ingestion(
+                resolve_path(cfg["input_dir"]), cfg["ingestion"], PROJECT_ROOT, run_dir / "01_extracted", extract_cache
+            )
         titles = {d.doc_id: d.title for d in docs}
 
         # ---------------------------------------------------------- 2 chunking
-        with timer("2 · Chunking"):
-            chunks = run_chunking(docs, cfg["chunking"])
+        strategy = cfg["chunking"].get("strategy", "packed")
+        with timer(f"2 · Chunking ({strategy})"):
+            if strategy == "toc_json":
+                chunks, tocs = run_json_chunking(docs, cfg["chunking"])
+                write_json(run_dir / "02_toc.json", tocs)
+                # the JSON chunks exactly as the models read them
+                write_json(run_dir / "02_chunks.json", [{"chunk_id": c.chunk_id, **c.payload} for c in chunks])
+            else:
+                chunks = run_chunking(docs, cfg["chunking"])
             write_jsonl(run_dir / "02_chunks.jsonl", [c.to_dict() for c in chunks])
             log.info("  %d chunks total", len(chunks))
 
@@ -187,9 +206,14 @@ def run(cfg: Config, run_name: str | None = None, reuse_benchmark: str | None = 
                 raise RuntimeError("No questions could be generated – check run.log for model errors.")
 
         # ---------------------------------------------------------- 5 filtering
-        chunk_text = {c.chunk_id: c.text for c in chunks}
+        chunk_text = {c.chunk_id: c.text for c in chunks}  # flat text
+        chunk_prompt = {c.chunk_id: c.prompt_text for c in chunks}  # what the models read (JSON for toc_json)
+        # citations may be quoted from the flat text or from JSON values/table rows -> ground against both
+        grounding_text = {
+            cid: t if chunk_prompt[cid] == t else f"{t}\n\n{chunk_prompt[cid]}" for cid, t in chunk_text.items()
+        }
         with timer("5 · Filtering (citation + number grounding, dedup)"):
-            questions, filt_stats = run_filtering(raw_questions, chunk_text, cfg["filtering"])
+            questions, filt_stats = run_filtering(raw_questions, grounding_text, cfg["filtering"])
             if not questions:
                 raise RuntimeError("All generated questions were filtered out – lower filtering thresholds in the config.")
 
@@ -197,7 +221,7 @@ def run(cfg: Config, run_name: str | None = None, reuse_benchmark: str | None = 
             with timer("5b · Cross-model verification of questions"):
                 verifiers = resolve_models(cfg, cfg["filtering"].get("verifiers"))
                 questions, vstats = run_verification(
-                    client, questions, chunk_text, verifiers, int(cfg["ollama"]["concurrency"])
+                    client, questions, chunk_prompt, verifiers, int(cfg["ollama"]["concurrency"])
                 )
                 filt_stats["verification"] = vstats
                 for reason, n in vstats["dropped"].items():
@@ -219,6 +243,7 @@ def run(cfg: Config, run_name: str | None = None, reuse_benchmark: str | None = 
                 "bench_title": " + ".join(d.title for d in docs),
                 "doc_pages": sum(d.meta["pages"] for d in docs),
                 "n_chunks": len(chunks),
+                "chunking": strategy,
                 "generators": generators,
                 "gen_stats": gen_stats,
                 "bench_stats": filt_stats,
@@ -229,7 +254,7 @@ def run(cfg: Config, run_name: str | None = None, reuse_benchmark: str | None = 
             card_ctx = {**meta, "profile": cfg["profile"], "n_items": len(items), "items_by_task": items_by_task,
                         "filter_cfg": cfg["filtering"]}
             judge_for_export = fixed_judges[0] if fixed_judges else models[-1]
-            export_benchmark(bench_dir, questions, items, chunk_text, summaries, judge_for_export, benchmark_card(card_ctx))
+            export_benchmark(bench_dir, questions, items, chunk_prompt, summaries, judge_for_export, benchmark_card(card_ctx))
             log.info("  Benchmark written to %s", bench_dir)
 
     if generate_only:
@@ -274,6 +299,7 @@ def run(cfg: Config, run_name: str | None = None, reuse_benchmark: str | None = 
             "bench_stats": meta["bench_stats"],
             "run_name": run_name,
             "profile": cfg["profile"],
+            "chunking": meta.get("chunking", "packed"),
             "judge_desc": judge_desc,
             "judge_stats": js,
             "ollama_version": client.version(),
@@ -284,6 +310,7 @@ def run(cfg: Config, run_name: str | None = None, reuse_benchmark: str | None = 
             {
                 "run": run_name,
                 "profile": cfg["profile"],
+                "chunking": meta.get("chunking", "packed"),
                 "arbench_version": __version__,
                 "document": meta["bench_title"],
                 "models": {m: {"label": labels[m], **model_info.get(m, {})} for m in models},

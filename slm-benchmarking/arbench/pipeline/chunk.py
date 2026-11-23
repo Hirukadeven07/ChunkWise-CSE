@@ -13,6 +13,7 @@ Multi-hop groups (YourBench `multihop_chunks`) are sampled later during generati
 
 from __future__ import annotations
 
+import json
 import logging
 import re
 from dataclasses import asdict, dataclass, field
@@ -34,9 +35,17 @@ class Chunk:
     n_tokens: int = 0
     quality: float = 0.0
     n_numbers: int = 0
+    # ToC-structured JSON chunk (json_chunk.py). When set, this JSON - not `text` - is what the
+    # models read; `text` stays the flat version used for BM25, quality and grounding checks.
+    payload: dict | None = None
 
     def to_dict(self) -> dict:
         return asdict(self)
+
+    @property
+    def prompt_text(self) -> str:
+        """The chunk as shown to a model: rendered JSON for JSON chunks, plain text otherwise."""
+        return render_json_chunk(self.payload) if self.payload else self.text
 
     @property
     def page_label(self) -> str:
@@ -44,6 +53,24 @@ class Chunk:
             return "?"
         a, b = min(self.pages), max(self.pages)
         return f"p. {a}" if a == b else f"pp. {a}-{b}"
+
+
+def _dump(v) -> str:
+    return json.dumps(v, ensure_ascii=False)
+
+
+def render_json_chunk(payload: dict) -> str:
+    """Valid JSON, one content block per line: readable for small models, little whitespace overhead."""
+    head = [f" {_dump(k)}: {_dump(v)}" for k, v in payload.items() if k != "content"]
+    blocks = [f"  {_dump(b)}" for b in payload.get("content", [])]
+    content = ' "content": [\n' + ",\n".join(blocks) + "\n ]" if blocks else ' "content": []'
+    return "{\n" + ",\n".join(head + [content]) + "\n}"
+
+
+def render_json_excerpts(chunks: list[Chunk]) -> str:
+    """Several JSON chunks as one JSON array, each tagged with its excerpt number."""
+    parts = [render_json_chunk({"excerpt": i + 1, **c.payload}) for i, c in enumerate(chunks)]
+    return "[\n" + ",\n".join(parts) + "\n]"
 
 
 _HEADING = re.compile(r"^(#{1,6}\s+.+|[A-Z][A-Z0-9 &,'’\-–]{4,80})$")
@@ -107,7 +134,13 @@ def quality_score(text: str) -> float:
     if len(words) < 25:
         return 0.0
     lines = [ln for ln in text.splitlines() if ln.strip()]
-    toc_lines = sum(1 for ln in lines if re.search(r"(\.{3,}|…{2,}|\s{2,})\s*\d{1,4}\s*$", ln))
+    toc_lines = sum(
+        1
+        for ln in lines
+        # "Outlook ...... 137"  or  "- 137 Macroeconomic Outlook" (page number first, short, no figures after it)
+        if re.search(r"(\.{3,}|…{2,}|\s{2,})\s*\d{1,4}\s*$", ln)
+        or re.match(r"^\s*(?:[-*•]\s*)?\d{1,3}\s+[A-Z][^\d|.:;]{2,70}$", ln.strip())
+    )
     toc_ratio = toc_lines / max(1, len(lines))
     alpha_ratio = sum(len(w) for w in words) / max(1, len(re.sub(r"\s", "", text)))
     lower = text.lower()
@@ -117,6 +150,9 @@ def quality_score(text: str) -> float:
     )
     score = 0.5 * min(1.0, alpha_ratio / 0.6) + 0.3 * min(1.0, len(words) / 120) + 0.2
     score -= 0.8 * toc_ratio + 0.15 * min(boiler, 3)
+    # a contents page is never a good source of questions, even when mixed with short blurbs
+    if toc_ratio >= 0.3 or re.search(r"^#+\s*\**\s*(table of )?contents\s*\**\s*$", text, re.IGNORECASE | re.MULTILINE):
+        score = min(score, 0.2)
     return round(max(0.0, min(1.0, score)), 3)
 
 

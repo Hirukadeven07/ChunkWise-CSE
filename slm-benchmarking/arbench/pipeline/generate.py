@@ -98,8 +98,10 @@ def sample_multihop_groups(chunks: list[Chunk], n_groups: int, size: int, seed: 
 
 def _single_request(kind: str, chunk: Chunk, title: str, summary: str, n: int, temperature: float) -> ChatRequest:
     system = (prompts.MCQ_SYSTEM if kind == "multi_choice" else prompts.SINGLE_HOP_SYSTEM).format(n=n)
+    if chunk.payload:
+        system = prompts.with_json_note(system)
     user = prompts.SINGLE_HOP_USER.format(
-        title=title, summary=summary, chunk=chunk.text, page_label=chunk.page_label
+        title=title, summary=summary, chunk=chunk.prompt_text, page_label=chunk.page_label
     )
     return ChatRequest(
         messages=[{"role": "system", "content": system}, {"role": "user", "content": user}],
@@ -111,11 +113,14 @@ def _single_request(kind: str, chunk: Chunk, title: str, summary: str, n: int, t
 
 def _multi_request(group: list[Chunk], title: str, summary: str, n: int, temperature: float) -> ChatRequest:
     chunk_xml = "\n\n".join(
-        f'<text_chunk id="{i + 1}" source="{c.page_label}">\n{c.text}\n</text_chunk>' for i, c in enumerate(group)
+        f'<text_chunk id="{i + 1}" source="{c.page_label}">\n{c.prompt_text}\n</text_chunk>' for i, c in enumerate(group)
     )
+    system = prompts.MULTI_HOP_SYSTEM.format(n=n)
+    if any(c.payload for c in group):
+        system = prompts.with_json_note(system)
     return ChatRequest(
         messages=[
-            {"role": "system", "content": prompts.MULTI_HOP_SYSTEM.format(n=n)},
+            {"role": "system", "content": system},
             {"role": "user", "content": prompts.MULTI_HOP_USER.format(title=title, summary=summary, chunks=chunk_xml)},
         ],
         temperature=temperature,
