@@ -42,6 +42,29 @@ Everything after that runs automatically.
 Open `notebooks/ARBench_Colab_L4.ipynb` in Colab, select an **L4** runtime and run all cells. It installs Ollama,
 pulls the models, asks for the annual report, and runs `python run_benchmark.py --profile colab`.
 
+### JSON-chunk variant (ToC-structured chunks)
+`notebooks/ARBench_JSON_ToC_Colab_L4.ipynb` runs the same benchmark, but the report is chunked along its **table of
+contents** and the SLMs read **JSON chunks** instead of flat text (`--chunking toc_json`). The notebook first shows the
+recovered ToC and sample chunks, then runs the benchmark. It also has an optional controlled A/B: the same questions are
+answered from the same chunks rendered as flat text, which measures the effect of the JSON format alone.
+
+```bash
+python run_benchmark.py --profile quick --chunking toc_json
+```
+
+How it works (`arbench/pipeline/toc.py`, `arbench/pipeline/json_chunk.py`):
+
+1. **ToC recovery.** It uses the PDF bookmarks if present. Otherwise it parses the printed *Contents* page and learns
+   the printed-to-PDF page offset from the text. As a last resort it uses Markdown headings. Each entry is pinned to
+   its heading line, so two sections that start on the same page are still separated.
+2. **Sections → typed JSON blocks**: `heading`, `paragraph`, `list`, `table` (`columns` + `rows`; multi-row headers
+   such as *GROUP* over *2026 | 2025* become `GROUP 2026`) and `figure_text` (text from charts/infographics).
+3. **Packing.** Chunks never cross a section boundary. They prefer to break at sub-headings, and tiny sibling
+   sections are merged under their parent. Each chunk carries `document`, `section.path`, `subsection`, `pages` and `part`.
+4. Generation, verification, evaluation and judging prompts all receive the JSON, with a short note that explains the
+   format. Flat text is kept only for BM25 retrieval and the grounding filters. The run also writes
+   `02_toc.json` and `02_chunks.json`.
+
 ---
 
 ## What you get (`outputs/<run>/`)
@@ -113,6 +136,7 @@ python run_benchmark.py --no-judge                   # lexical metrics only (fas
 python run_benchmark.py --generate-only              # just build the benchmark file
 python run_benchmark.py --reuse-benchmark outputs/<run>   # evaluate (new) models on an existing benchmark
 python run_benchmark.py --run-name myrun             # fixed folder name -> resume after interruption
+python run_benchmark.py --chunking toc_json          # ToC-structured JSON chunks are what the SLMs read
 ```
 
 All settings (chunk sizes, number of questions, filters, tasks, weights, judge strategy, models) live in

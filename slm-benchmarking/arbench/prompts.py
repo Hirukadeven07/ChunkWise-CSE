@@ -298,3 +298,30 @@ JUDGE_USER = """<evidence>
 </model_answer>"""
 
 JUDGE_SCORES = {"correct": 1.0, "partially_correct": 0.5, "incorrect": 0.0}
+
+# =============================================================================
+# ToC-structured JSON chunks (chunking.strategy = toc_json)
+# =============================================================================
+
+JSON_CHUNK_NOTE = """
+
+## Input format
+The report text is given as JSON chunks built from the report's table of contents. In each chunk:
+- "section.path" is where the chunk sits in the table of contents (outermost section first) and "subsection" \
+is the nearest heading above the chunk's text;
+- "pages" are the PDF pages it spans; "part" says which piece of a long section it is;
+- "content" is the text in reading order as typed blocks: "heading", "paragraph", "list" (in "items"), \
+"table" ("columns" plus "rows", one array per row; cells line up with columns) and "figure_text" (text \
+extracted from a chart or infographic, possibly fragmented).
+Use the section path to name what a figure refers to (segment, statement, period). Quote citations verbatim \
+from the text values or table cells, never JSON syntax or key names."""
+
+JSON_EXCERPTS_NOTE = """
+The excerpts are JSON objects built from the report's table of contents: "section.path" locates each excerpt \
+in the report, "content" holds its headings, paragraphs, lists and tables ("columns" + "rows"). Read the values; \
+answer in plain prose, not JSON."""
+
+
+def with_json_note(system: str, generation: bool = True) -> str:
+    """Explain the JSON chunk format to the model (generation/verification vs. evaluation/judging)."""
+    return system + (JSON_CHUNK_NOTE if generation else JSON_EXCERPTS_NOTE)

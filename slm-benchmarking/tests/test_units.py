@@ -220,3 +220,40 @@ def test_verification_open_answers():
     kept, _ = run_verification(_ScriptedClient({"v1": no, "v2": '{"reasoning":"","supported":true}'}), [dict(q)],
                                {"c1": "text"}, ["gen", "v1", "v2"])
     assert len(kept) == 1
+
+
+def test_toc_with_leading_page_numbers_scores_low():
+    from arbench.pipeline.chunk import quality_score
+
+    toc = "\n".join(
+        f"- {n} {t}"
+        for n, t in [
+            (137, "Macroeconomic Outlook"), (139, "Group Outlook"), (143, "Key Risks"),
+            (157, "Share Information"), (167, "Transportation"), (183, "Consumer Foods"),
+            (203, "Retail"), (223, "Leisure"), (246, "Property"), (260, "Financial Services"),
+            (568, "Economic Value Statement"), (570, "Decade at a Glance"), (575, "Glossary"),
+        ]
+    )
+    prose = (
+        "Interest expense increased by 27% from Rs.28.10 billion in CY2024 to Rs.35.57 billion in CY2025, "
+        "while operating expenses rose by 13% to Rs.16.96 billion, largely due to higher personnel costs. " * 3
+    )
+    assert quality_score(toc) < 0.35
+    assert quality_score(prose) > 0.8
+
+
+def test_clean_pages_strips_unmapped_glyphs():
+    from arbench.pipeline.ingest import Page, clean_pages
+
+    out = clean_pages([Page(1, "- \ufffd Guided nature walks\n- \ue001 Night tours")], strip_headers_footers=False)
+    assert out[0].text == "- Guided nature walks\n- Night tours"
+
+
+def test_guess_title_strips_markdown():
+    from pathlib import Path
+
+    from arbench.pipeline.ingest import Page, _guess_title
+
+    assert _guess_title(Path("x.pdf"), [Page(1, "**John Keells Holdings PLC** Annual Report 2025/26")]) == (
+        "John Keells Holdings PLC Annual Report 2025/26"
+    )

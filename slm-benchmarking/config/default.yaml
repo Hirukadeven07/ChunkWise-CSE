@@ -42,6 +42,10 @@ ingestion:
   min_chars_per_page_warning: 200   # warn if a PDF looks scanned (needs OCR)
 
 chunking:
+  strategy: packed          # packed   -> paragraphs/tables packed into flat-text chunks (models read text)
+                            # toc_json -> sections cut along the report's table of contents (PDF bookmarks ->
+                            #             printed Contents page -> headings), converted to typed JSON blocks
+                            #             (heading/paragraph/list/table/figure_text); models read the JSON
   target_tokens: 700        # structure-aware packing of paragraphs into ~N-token chunks
   max_tokens: 1000
   overlap_tokens: 80

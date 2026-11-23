@@ -33,11 +33,16 @@ def _verifiers(q: dict, models: list[str]) -> list[str]:
 
 def _request(q: dict, evidence: str) -> ChatRequest:
     ev = truncate_tokens(evidence, 1500)
+    is_json = evidence.lstrip().startswith(("{", "["))  # ToC-structured JSON chunks
+
+    def system(s: str) -> str:
+        return prompts.with_json_note(s, generation=False) if is_json else s
+
     if q["kind"] == "multi_choice":
         a, b, c, d = q["choices"]
         return ChatRequest(
             messages=[
-                {"role": "system", "content": prompts.VERIFY_MCQ_SYSTEM},
+                {"role": "system", "content": system(prompts.VERIFY_MCQ_SYSTEM)},
                 {"role": "user", "content": prompts.VERIFY_MCQ_USER.format(evidence=ev, question=q["question"], a=a, b=b, c=c, d=d)},
             ],
             temperature=0.0,
@@ -46,7 +51,7 @@ def _request(q: dict, evidence: str) -> ChatRequest:
         )
     return ChatRequest(
         messages=[
-            {"role": "system", "content": prompts.VERIFY_QA_SYSTEM},
+            {"role": "system", "content": system(prompts.VERIFY_QA_SYSTEM)},
             {"role": "user", "content": prompts.VERIFY_QA_USER.format(evidence=ev, question=q["question"], answer=q["answer"])},
         ],
         temperature=0.0,

@@ -18,7 +18,7 @@ import random
 from dataclasses import dataclass
 
 from arbench import prompts
-from arbench.pipeline.chunk import Chunk
+from arbench.pipeline.chunk import Chunk, render_json_excerpts
 from arbench.retrieval import BM25, content_overlap
 from arbench.utils import core_numbers, extract_numbers, numbers_match, stable_hash
 
@@ -49,6 +49,8 @@ TASKS: dict[str, TaskSpec] = {
 
 
 def format_excerpts(chunks: list[Chunk]) -> str:
+    if chunks and all(c.payload for c in chunks):
+        return render_json_excerpts(chunks)  # ToC-structured JSON chunks -> one JSON array
     return "\n\n".join(
         f"[Excerpt {i + 1} | {c.page_label}{' | ' + c.section if c.section else ''}]\n{c.text}"
         for i, c in enumerate(chunks)
@@ -74,6 +76,7 @@ def _item(task: str, q: dict, context_chunks: list[Chunk], evidence_chunks: list
         "context_chunk_ids": [c.chunk_id for c in context_chunks],
         "context": format_excerpts(context_chunks) if context_chunks else "",
         "evidence": format_excerpts(evidence_chunks),
+        "context_format": "json" if any(c.payload for c in context_chunks + evidence_chunks) else "text",
         **extra,
     }
 
@@ -151,10 +154,15 @@ def build_items(questions: list[dict], chunks: list[Chunk], eval_cfg, seed: int)
 def build_messages(item: dict) -> list[dict[str, str]]:
     """LightEval-style prompt function: item -> chat messages."""
     task = item["task"]
+    is_json = item.get("context_format") == "json"
+
+    def system(s: str) -> str:
+        return prompts.with_json_note(s, generation=False) if is_json else s
+
     if task == "multi_choice":
         options = "\n".join(f"{chr(65 + i)}. {c}" for i, c in enumerate(item["choices"]))
         return [
-            {"role": "system", "content": prompts.MCQ_EVAL_SYSTEM},
+            {"role": "system", "content": system(prompts.MCQ_EVAL_SYSTEM)},
             {
                 "role": "user",
                 "content": prompts.MCQ_EVAL_USER.format(
@@ -168,7 +176,7 @@ def build_messages(item: dict) -> list[dict[str, str]]:
             {"role": "user", "content": prompts.CLOSED_BOOK_USER.format(question=item["question"])},
         ]
     return [
-        {"role": "system", "content": prompts.QA_SYSTEM},
+        {"role": "system", "content": system(prompts.QA_SYSTEM)},
         {"role": "user", "content": prompts.QA_USER.format(excerpts=item["context"], question=item["question"])},
     ]
 

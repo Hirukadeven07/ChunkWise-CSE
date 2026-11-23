@@ -7,6 +7,7 @@
     python run_benchmark.py --models qwen3:4b-instruct granite4.1:3b
     python run_benchmark.py --reuse-benchmark outputs/<run>   # evaluate new models on an existing benchmark
     python run_benchmark.py --generate-only      # only build the benchmark file
+    python run_benchmark.py --chunking toc_json  # ToC-structured JSON chunks are fed to the models
 
 Re-running the same command resumes: every model call is cached in outputs/.cache.
 """
@@ -33,6 +34,8 @@ def parse_args(argv=None) -> argparse.Namespace:
     p.add_argument("--generate-only", action="store_true", help="stop after building the benchmark")
     p.add_argument("--no-judge", action="store_true", help="skip the LLM jury (use token-F1 instead)")
     p.add_argument("--judge", default=None, help="use one fixed judge model (e.g. qwen3:8b) instead of the cross jury")
+    p.add_argument("--chunking", choices=["packed", "toc_json"], default=None,
+                   help="packed = flat-text chunks (default); toc_json = ToC-structured JSON chunks fed to the SLMs")
     p.add_argument("--concurrency", type=int, default=None, help="parallel requests per model (GPU: 4)")
     p.add_argument("--host", default=None, help="Ollama URL (default http://127.0.0.1:11434)")
     p.add_argument("--verbose", action="store_true")
@@ -55,6 +58,8 @@ def main(argv=None) -> int:
         overrides.setdefault("judge", {})["enabled"] = False
     if args.judge:
         overrides.setdefault("judge", {}).update({"strategy": "fixed", "models": [args.judge]})
+    if args.chunking:
+        overrides.setdefault("chunking", {})["strategy"] = args.chunking
     if args.concurrency:
         overrides.setdefault("ollama", {})["concurrency"] = args.concurrency
     if args.host:

@@ -76,9 +76,12 @@ def judges_for(candidate: str, models: list[str], judge_cfg, fixed_judges: list[
 
 def _judge_request(item: dict, answer: str, judge_cfg) -> ChatRequest:
     evidence = truncate_tokens(item["evidence"], int(judge_cfg.get("max_evidence_tokens", 1200)))
+    system = prompts.JUDGE_SYSTEM
+    if item["evidence"].lstrip().startswith(("[", "{")):  # JSON evidence (toc_json chunks)
+        system = prompts.with_json_note(system, generation=False)
     return ChatRequest(
         messages=[
-            {"role": "system", "content": prompts.JUDGE_SYSTEM},
+            {"role": "system", "content": system},
             {
                 "role": "user",
                 "content": prompts.JUDGE_USER.format(

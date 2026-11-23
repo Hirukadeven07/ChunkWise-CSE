@@ -32,12 +32,17 @@ def _parse_summary(text: str) -> str:
     return text.strip()
 
 
+def _summary_prompt(chunk: Chunk) -> str:
+    prompt = prompts.SUMMARIZE_PROMPT.format(text=chunk.prompt_text)
+    return prompts.with_json_note(prompt) if chunk.payload else prompt
+
+
 def summarize(client: OllamaClient, model: str, title: str, chunks: list[Chunk], max_chunks: int) -> str:
     # always include the opening chunks (highlights / chair letter) plus evenly spaced ones
     picks = _evenly_spaced(len(chunks), max_chunks)
     reqs = [
         ChatRequest(
-            messages=[{"role": "user", "content": prompts.SUMMARIZE_PROMPT.format(text=chunks[i].text)}],
+            messages=[{"role": "user", "content": _summary_prompt(chunks[i])}],
             temperature=0.2,
             max_tokens=400,
             format=prompts.SUMMARY_SCHEMA,
