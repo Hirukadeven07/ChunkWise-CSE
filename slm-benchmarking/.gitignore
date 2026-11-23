@@ -1,0 +1,18 @@
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+outputs/
+data/annual_report/*
+!data/annual_report/README.md
+colab_upload/
+
+# AI assistant local files (never commit)
+.claude/
+**/.claude/
+CLAUDE.md
+CLAUDE.local.md
+**/CLAUDE.md
+**/CLAUDE.local.md
+.claude.json
+.mcp.json
