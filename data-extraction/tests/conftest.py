@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+from pdfs import text_pdf
 
 from cse_extract.converter import Conversion
 
@@ -56,7 +57,7 @@ def report_dir(tmp_path: Path) -> Path:
     ):
         path = root / rel
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_bytes(b"%PDF-1.7 test")
+        path.write_bytes(text_pdf(marker=rel))  # real PDFs with text, each one different
     return root
 
 

@@ -13,6 +13,9 @@ def test_loads_settings_and_resolves_relative_paths(config_file: Path, report_di
     assert config.docling.device == "auto"
     assert config.docling.table_mode == "accurate"
     assert config.docling.ocr is False
+    assert config.validation.enabled is True
+    assert config.validation.min_chars_per_page == 50
+    assert config.validation.min_text_ratio == 0.5
 
 
 def test_docling_settings_are_read(tmp_path: Path):
@@ -40,6 +43,9 @@ def test_default_config_in_repo_loads():
         ("input_dir: in\noutput_dir: out\ndocling: {device: tpu}\n", "docling.device"),
         ("input_dir: in\noutput_dir: out\ndocling: {table_mode: slow}\n", "docling.table_mode"),
         ("- just\n- a list\n", "mapping"),
+        ("input_dir: in\noutput_dir: out\nvalidation: {min_text_ratio: 1.5}\n", "between 0 and 1"),
+        ("input_dir: in\noutput_dir: out\nvalidation: {min_chars_per_page: -1}\n", "negative"),
+        ("input_dir: in\noutput_dir: out\nvalidation: {min_chars_per_page: lots}\n", "invalid validation"),
         ("input_dir: [unclosed\n", "not valid YAML"),
     ],
 )
