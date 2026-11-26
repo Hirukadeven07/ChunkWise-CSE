@@ -1,0 +1,32 @@
+name: PR source check
+
+# Runs from main's copy of this file (pull_request_target), so a PR
+# cannot edit the check to make itself pass. No PR code is checked out.
+on:
+  pull_request_target:
+    branches: [main]
+    types: [opened, reopened, synchronize, edited]
+
+permissions: {}
+
+jobs:
+  production-source:
+    name: production-source
+    runs-on: ubuntu-latest
+    steps:
+      - name: Source branch must be <component>/production
+        env:
+          HEAD_REF: ${{ github.head_ref }}
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+          BASE_REPO: ${{ github.repository }}
+        run: |
+          if [ "$HEAD_REPO" != "$BASE_REPO" ]; then
+            echo "::error::PRs to main must come from a branch in this repository, not a fork."
+            exit 1
+          fi
+          if [[ "$HEAD_REF" =~ ^[A-Za-z0-9._-]+/production$ ]]; then
+            echo "OK: '$HEAD_REF' is a production branch."
+          else
+            echo "::error::PRs to main must come from a '<component>/production' branch (e.g. slm-benchmarking/production). This PR comes from '$HEAD_REF'."
+            exit 1
+          fi
