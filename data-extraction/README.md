@@ -15,6 +15,24 @@ The outputs mirror the input folders, for example `Annual Reports/N/NATIONS TRUS
 
 Every attempted report gets a row in `manifest.csv` in the output folder with its status, page count and speed. Reports that already have both outputs are skipped, so an interrupted run can be started again, and a report that fails is logged without stopping the run. Folders named in `exclude_dirs` (such as `Interim`) are ignored.
 
+### Checks before conversion (FR02)
+
+Before Docling sees a report, each PDF is checked:
+
+- **Text layer.** Every page is read with pypdfium2, and a page with fewer than `min_chars_per_page` characters counts as image-only. A report where fewer than `min_text_ratio` of the pages have text is **rejected**, since scanned reports need OCR, which is out of scope. Reports with only a few image-only pages, such as covers or a scanned signature page, are accepted and the pages are listed. Files that cannot be opened as a PDF are rejected too.
+- **Duplicates.** A SHA-256 fingerprint of each file catches the same PDF saved under two names. Reports are processed in path order, so the first one is converted and the later copy is logged as a **duplicate** of it, including copies of reports converted in an earlier run.
+
+Rejected and duplicate reports are logged but never converted, and they do not make the run fail.
+
+`cse-extract check` runs only these checks, without Docling, and writes `validation.csv` (outcome, pages, share of text pages, image-only pages, duplicates). It takes about a second per report, so it is worth running before a long GPU run, and its output is also useful for the exploratory data analysis.
+
+| Status in `manifest.csv` | Meaning |
+|---|---|
+| `success`, `partial_success` | Converted (partial: Docling skipped some content) |
+| `failure`, `error` | Docling failed or crashed; the run exits with code 1 so it is noticed |
+| `rejected` | Failed the checks: unreadable, or mostly image-only |
+| `duplicate` | The same file as a report already converted |
+
 ## Running it
 
 On a Colab GPU (about 1.5-2 pages per second on an L4): open `notebooks/extract_on_colab.ipynb` in Colab and follow the steps at the top. Until this code is merged into `data-extraction/dev`, set `BRANCH` in the notebook to the feature branch.
@@ -25,7 +43,8 @@ On your own computer (much slower without a GPU), with the PDFs in `data-extract
 cd data-extraction
 pip install -e ".[docling,dev]"
 cse-extract list --config configs/default.yaml   # count the reports
-cse-extract run --config configs/default.yaml    # extract them
+cse-extract check --config configs/default.yaml  # check every PDF, without converting
+cse-extract run --config configs/default.yaml    # check and extract them
 ```
 
 `--only NATIONS SAMPATH` limits a run to reports whose path contains any of the given words, `--limit 5` stops after five reports, and `--force` redoes reports that are already extracted.
@@ -43,6 +62,9 @@ cse-extract run --config configs/default.yaml    # extract them
 | `docling.ocr` | OCR for scanned pages; off, since scanned reports are out of scope |
 | `docling.table_mode` | `accurate` or `fast` table structure recognition |
 | `docling.layout_model` | A Docling layout preset such as `layout_egret_large`, or `null` for the default |
+| `validation.enabled` | Run the checks before conversion |
+| `validation.min_chars_per_page` | Characters a page needs to count as having text (default 50) |
+| `validation.min_text_ratio` | Share of text pages a report needs to be accepted (default 0.5) |
 
 ## Tests
 
@@ -50,4 +72,4 @@ cse-extract run --config configs/default.yaml    # extract them
 pytest
 ```
 
-The tests replace Docling with a stand-in converter, so they run in a second without Docling installed.
+The tests replace Docling with a stand-in converter and build small PDFs on the fly (`tests/pdfs.py`), so they run in a second without Docling installed.
