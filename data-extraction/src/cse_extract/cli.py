@@ -1,4 +1,4 @@
-"""Command-line entry point: ``cse-extract list`` and ``cse-extract run``."""
+"""Command-line entry point: ``cse-extract list``, ``cse-extract check`` and ``cse-extract run``."""
 
 from __future__ import annotations
 
@@ -10,13 +10,26 @@ from collections import Counter
 from cse_extract.config import ConfigError, load_config
 from cse_extract.converter import Converter, build_docling_converter
 from cse_extract.reports import find_reports, select
-from cse_extract.runner import is_done, run_extraction
+from cse_extract.runner import (
+    FAILED_STATUSES,
+    VALIDATION_NAME,
+    Validator,
+    check_reports,
+    default_validator,
+    is_done,
+    run_extraction,
+)
 
 
-def main(argv: list[str] | None = None, converter: Converter | None = None) -> int:
+def main(
+    argv: list[str] | None = None,
+    converter: Converter | None = None,
+    validator: Validator | None = None,
+) -> int:
     """Run the CLI. Returns the process exit code.
 
-    converter replaces Docling, which the tests use to run without it.
+    converter and validator replace Docling and the PDF checks, which the tests use to run
+    without real PDFs.
     """
     args = _parser().parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(message)s")
@@ -37,6 +50,17 @@ def main(argv: list[str] | None = None, converter: Converter | None = None) -> i
             print(f"  {year}: {count}")
         return 0
 
+    validator = validator or default_validator(config)
+    if args.command == "check":
+        if validator is None:
+            print("error: validation is turned off in the config (validation.enabled)", file=sys.stderr)
+            return 2
+        print(f"checking {len(reports)} reports")
+        counts = check_reports(config, reports, validator)
+        print(f"done: {', '.join(f'{n} {k}' for k, n in sorted(counts.items())) or 'no reports'}")
+        print(f"details: {config.output_dir / VALIDATION_NAME}")
+        return 0
+
     if converter is None:
         try:
             converter = build_docling_converter(config.docling)
@@ -48,9 +72,9 @@ def main(argv: list[str] | None = None, converter: Converter | None = None) -> i
             return 2
 
     print(f"{len(reports)} reports, writing to {config.output_dir}")
-    summary = run_extraction(config, reports, converter, force=args.force)
+    summary = run_extraction(config, reports, converter, force=args.force, validator=validator)
     print(f"done: {summary.line()}")
-    failed = summary.counts["failure"] + summary.counts["error"]
+    failed = sum(summary.counts[status] for status in FAILED_STATUSES)
     return 1 if failed else 0
 
 
@@ -61,7 +85,8 @@ def _parser() -> argparse.ArgumentParser:
     commands = parser.add_subparsers(dest="command", required=True)
     for name, help_text in (
         ("list", "count the reports a run would cover"),
-        ("run", "extract the reports"),
+        ("check", "check every PDF for a text layer and duplicates, without converting"),
+        ("run", "check and extract the reports"),
     ):
         command = commands.add_parser(name, help=help_text)
         command.add_argument("--config", required=True, help="path to the YAML config")
