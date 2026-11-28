@@ -1,4 +1,4 @@
-"""Command-line entry point: ``cse-extract list``, ``cse-extract check`` and ``cse-extract run``."""
+"""Command-line entry point: ``cse-extract list``, ``check``, ``run`` and ``figures``."""
 
 from __future__ import annotations
 
@@ -9,6 +9,7 @@ from collections import Counter
 
 from cse_extract.config import ConfigError, load_config
 from cse_extract.converter import Converter, build_docling_converter
+from cse_extract.figures import FIGURES_NAME, KEY_FIGURES_NAME, write_figures
 from cse_extract.reports import find_reports, select
 from cse_extract.runner import (
     FAILED_STATUSES,
@@ -17,6 +18,7 @@ from cse_extract.runner import (
     check_reports,
     default_validator,
     is_done,
+    outputs_for,
     run_extraction,
 )
 
@@ -48,6 +50,21 @@ def main(
         print(f"{len(reports)} reports in {config.input_dir} ({done} already extracted)")
         for year, count in sorted(per_year.items(), key=lambda item: str(item[0])):
             print(f"  {year}: {count}")
+        return 0
+
+    if args.command == "figures":
+        counts = write_figures(
+            reports,
+            lambda report: outputs_for(report, config.output_dir)[0],
+            config.output_dir,
+            log=logging.getLogger("cse_extract").info,
+        )
+        print(
+            f"done: {counts['figures']} figures and {counts['key_figures']} key figures from "
+            f"{counts['reports']} reports ({counts['not_extracted']} not extracted yet, "
+            f"{counts['unreadable']} unreadable)"
+        )
+        print(f"details: {config.output_dir / FIGURES_NAME} and {config.output_dir / KEY_FIGURES_NAME}")
         return 0
 
     validator = validator or default_validator(config)
@@ -87,6 +104,7 @@ def _parser() -> argparse.ArgumentParser:
         ("list", "count the reports a run would cover"),
         ("check", "check every PDF for a text layer and duplicates, without converting"),
         ("run", "check and extract the reports"),
+        ("figures", "read the financial figures from the extracted tables"),
     ):
         command = commands.add_parser(name, help=help_text)
         command.add_argument("--config", required=True, help="path to the YAML config")
