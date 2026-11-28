@@ -1,4 +1,4 @@
-"""Command-line entry point: ``cse-extract list`` and ``cse-extract run``."""
+"""Command-line entry point: ``cse-extract list``, ``run`` and ``sections``."""
 
 from __future__ import annotations
 
@@ -11,6 +11,7 @@ from cse_extract.config import ConfigError, load_config
 from cse_extract.converter import Converter, build_docling_converter
 from cse_extract.reports import find_reports, select
 from cse_extract.runner import is_done, run_extraction
+from cse_extract.sections import SUMMARY_NAME, run_sections
 
 
 def main(argv: list[str] | None = None, converter: Converter | None = None) -> int:
@@ -37,6 +38,14 @@ def main(argv: list[str] | None = None, converter: Converter | None = None) -> i
             print(f"  {year}: {count}")
         return 0
 
+    if args.command == "sections":
+        counts = run_sections(config, reports)
+        print(
+            f"sections: {counts['done']} done, {counts['not_extracted']} not extracted yet, "
+            f"{counts['error']} error; summary in {config.output_dir / SUMMARY_NAME}"
+        )
+        return 1 if counts["error"] else 0
+
     if converter is None:
         try:
             converter = build_docling_converter(config.docling)
@@ -62,6 +71,7 @@ def _parser() -> argparse.ArgumentParser:
     for name, help_text in (
         ("list", "count the reports a run would cover"),
         ("run", "extract the reports"),
+        ("sections", "find the key sections of the extracted reports"),
     ):
         command = commands.add_parser(name, help=help_text)
         command.add_argument("--config", required=True, help="path to the YAML config")
