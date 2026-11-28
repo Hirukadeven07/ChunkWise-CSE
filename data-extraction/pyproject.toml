@@ -8,6 +8,7 @@ version = "0.1.0"
 description = "Docling extraction of Colombo Stock Exchange annual reports for ChunkWise CSE."
 requires-python = ">=3.10"
 dependencies = [
+    "pypdfium2",
     "pyyaml",
 ]
 
