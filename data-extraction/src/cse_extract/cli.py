@@ -1,4 +1,4 @@
-"""Command-line entry point: ``cse-extract list``, ``check``, ``run`` and ``figures``."""
+"""Command-line entry point: ``cse-extract list``, ``check``, ``run``, ``figures`` and ``sections``."""
 
 from __future__ import annotations
 
@@ -21,6 +21,7 @@ from cse_extract.runner import (
     outputs_for,
     run_extraction,
 )
+from cse_extract.sections import SUMMARY_NAME, run_sections
 
 
 def main(
@@ -67,6 +68,14 @@ def main(
         print(f"details: {config.output_dir / FIGURES_NAME} and {config.output_dir / KEY_FIGURES_NAME}")
         return 0
 
+    if args.command == "sections":
+        counts = run_sections(config, reports)
+        print(
+            f"sections: {counts['done']} done, {counts['not_extracted']} not extracted yet, "
+            f"{counts['error']} error; summary in {config.output_dir / SUMMARY_NAME}"
+        )
+        return 1 if counts["error"] else 0
+
     validator = validator or default_validator(config)
     if args.command == "check":
         if validator is None:
@@ -105,6 +114,7 @@ def _parser() -> argparse.ArgumentParser:
         ("check", "check every PDF for a text layer and duplicates, without converting"),
         ("run", "check and extract the reports"),
         ("figures", "read the financial figures from the extracted tables"),
+        ("sections", "find the key sections of the extracted reports"),
     ):
         command = commands.add_parser(name, help=help_text)
         command.add_argument("--config", required=True, help="path to the YAML config")
