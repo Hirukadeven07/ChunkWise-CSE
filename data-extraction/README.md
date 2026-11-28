@@ -30,6 +30,47 @@ cse-extract run --config configs/default.yaml    # extract them
 
 `--only NATIONS SAMPATH` limits a run to reports whose path contains any of the given words, `--limit 5` stops after five reports, and `--force` redoes reports that are already extracted.
 
+## Finding the key sections
+
+After extraction, `cse-extract sections --config configs/default.yaml` finds where the key sections of each report start and end, so chunking and summarising can use just the parts they need (FR03, FR05). `--only` and `--limit` work as above. It reads each report's `<report>.json`, plus the original PDF if it is still in `input_dir`, and needs no GPU.
+
+Sections looked for: chairman's message, CEO / managing director's review, management discussion and analysis, risk management, corporate governance, independent auditor's report, the statements of profit or loss, financial position, cash flows and changes in equity, and the notes to the financial statements.
+
+How a section's start is found, in this order:
+
+1. **PDF bookmarks**, when the PDF has them and is in `input_dir`. They are written by the company, so they are the most reliable.
+2. **Docling headings** (`title` and `section_header` items), matched against the different wordings reports use ("Chairman's Message", "Chairperson's Review", "Message from the Chairman", ...). Pages that mention three or more sections are treated as contents pages and ignored.
+
+A section ends on the page before the next section found starts (or on the same page if the next one starts part-way down it); the last one runs to the end of the report. A section that is not found is recorded as missing, not as an error. Limits: a section without a heading or bookmark is not found, and a section followed by pages that are not one of the sections above (for example "Board of Directors") is given those pages too.
+
+It writes, next to each report's JSON:
+
+`<report>.sections.json`
+
+```json
+{
+  "report_id": "N/NATIONS TRUST BANK PLC/nationstrustbankplc_2024",
+  "pages": 220,
+  "has_bookmarks": false,
+  "sections": [
+    {"key": "chairman_message", "name": "Chairman's message", "found": true,
+     "heading": "Message from the Chairman", "start_page": 8, "end_page": 11, "method": "heading"},
+    {"key": "management_discussion", "name": "Management discussion and analysis", "found": false,
+     "heading": null, "start_page": null, "end_page": null, "method": null}
+  ],
+  "blocks": [
+    {"ref": "#/texts/0", "page": 1, "section": null},
+    {"ref": "#/texts/57", "page": 8, "section": "chairman_message"},
+    {"ref": "#/tables/3", "page": 150, "section": "financial_position"}
+  ]
+}
+```
+
+- `sections` always lists all eleven sections, in the order above. Pages are 1-based, like Docling's `prov.page_no`. `method` is `bookmark` or `heading`.
+- `blocks` lists every text item and table of the Docling JSON in reading order. `ref` is the item's place in the Docling JSON (`#/texts/57` is `texts[57]`) and `section` is the key of the section it belongs to, or `null` if it comes before the first section or after a section's last page.
+
+And in the output folder, `sections_summary.csv`: one row per report with `report_id`, `company`, `year`, `status` (`done`, `not_extracted` or `error`), `found` (for example `9/11`), and one column per section key saying how it was found (`bookmark` or `heading`), empty if it is missing. The file is rewritten on every run.
+
 ## Settings
 
 `configs/default.yaml`; relative paths are resolved from the config file's folder.
@@ -37,7 +78,7 @@ cse-extract run --config configs/default.yaml    # extract them
 | Setting | Meaning |
 |---|---|
 | `input_dir` | Folder of report PDFs, in company sub-folders |
-| `output_dir` | Where the JSON, Markdown and `manifest.csv` go |
+| `output_dir` | Where the JSON, Markdown, `manifest.csv`, `.sections.json` files and `sections_summary.csv` go |
 | `exclude_dirs` | Folder names to skip, case-insensitive |
 | `docling.device` | `auto`, `cpu`, `cuda`, `mps` or `xpu` |
 | `docling.ocr` | OCR for scanned pages; off, since scanned reports are out of scope |
