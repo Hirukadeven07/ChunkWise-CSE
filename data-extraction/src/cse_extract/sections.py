@@ -234,10 +234,18 @@ class Start:
     position: int  # index in the reading order of the first block of the section
 
 
-def bookmarks(pdf_path: Path) -> list[tuple[str, int]] | None:
-    """The PDF's bookmarks as (title, 1-based page) pairs, or None if the PDF cannot be read.
+@dataclass(frozen=True)
+class Bookmark:
+    title: str
+    page: int  # 1-based, like Docling's page_no
+    level: int  # 0 for top-level bookmarks, 1 for those nested under them, ...
 
-    Bookmarks that do not point to a page are left out.
+
+def bookmarks(pdf_path: Path) -> list[Bookmark] | None:
+    """The PDF's bookmarks in outline order, or None if the PDF cannot be read.
+
+    Bookmarks that do not point to a page are left out, and so are the hidden "_GoBack"-style
+    ones that word processors leave behind, which point to random pages.
     """
     try:
         import pypdfium2 as pdfium
@@ -253,9 +261,10 @@ def bookmarks(pdf_path: Path) -> list[tuple[str, int]] | None:
     try:
         found = []
         for bookmark in pdf.get_toc():
+            title = bookmark.get_title().strip()
             index = _bookmark_page_index(pdf, bookmark, pdfium_c)
-            if index is not None:
-                found.append((bookmark.get_title(), index + 1))
+            if index is not None and title and not title.startswith("_"):
+                found.append(Bookmark(title=title, page=index + 1, level=bookmark.level))
         return found
     finally:
         pdf.close()
@@ -276,21 +285,35 @@ def _bookmark_page_index(pdf, bookmark, pdfium_c) -> int | None:
     return None
 
 
-def starts_from_bookmarks(marks: list[tuple[str, int]], blocks: list[Block]) -> list[Start]:
+def starts_from_bookmarks(marks: list[Bookmark], blocks: list[Block]) -> list[Start]:
     """The first bookmark that matches each section type."""
     starts: dict[str, Start] = {}
-    for title, page in marks:
-        section_type = section_type_for(title)
+    for mark in marks:
+        section_type = section_type_for(mark.title)
         if section_type is None or section_type.key in starts:
             continue
         starts[section_type.key] = Start(
             key=section_type.key,
-            heading=title.strip(),
-            page=page,
+            heading=mark.title,
+            page=mark.page,
             method="bookmark",
-            position=_first_position_on_or_after(blocks, page),
+            position=_first_position_on_or_after(blocks, mark.page),
         )
     return list(starts.values())
+
+
+def bookmark_end(marks: list[Bookmark], start: Start) -> int | None:
+    """The page before the next bookmark after this section's own bookmark, at the same or a
+    higher level, whatever its title. Bookmarks list every part of the report (for example
+    "Board of Directors" after "CEO's Review"), so they show where a section really ends,
+    not only where the next section we look for begins."""
+    own = next((i for i, m in enumerate(marks) if m.title == start.heading and m.page == start.page), None)
+    if own is None:
+        return None
+    for mark in marks[own + 1 :]:
+        if mark.level <= marks[own].level and mark.page > start.page:
+            return mark.page - 1
+    return None
 
 
 def contents_pages(blocks: list[Block]) -> set[int]:
@@ -305,25 +328,51 @@ def contents_pages(blocks: list[Block]) -> set[int]:
     return {page for page, keys in keys_per_page.items() if len(keys) >= CONTENTS_PAGE_MIN_SECTIONS}
 
 
-def starts_from_headings(blocks: list[Block], skip: set[str] = frozenset()) -> list[Start]:
-    """The first Docling heading that matches each section type, ignoring contents pages and
-    the section types in skip (already found another way)."""
+def starts_from_headings(
+    blocks: list[Block], skip: set[str] = frozenset(), notes_position: int | None = None
+) -> list[Start]:
+    """The Docling heading that marks the start of each section type, ignoring contents pages
+    and the section types in skip (already found another way).
+
+    Real sections begin at the top of a page, while the same words also appear as small
+    sub-headings mid-page (an "Auditors' Report" paragraph inside the Directors' Report, say).
+    So a heading at the top of its page is preferred, and the first matching heading anywhere
+    is used only if there is none.
+
+    Headings after notes_position (the start of the notes to the financial statements) are not
+    used for other sections, because they are note titles such as "27.2 Financial Risk
+    Management", not the report's own risk management section.
+    """
     ignored_pages = contents_pages(blocks)
-    starts: dict[str, Start] = {}
+    at_top: dict[str, Start] = {}
+    anywhere: dict[str, Start] = {}
+    top_of_page = True
     for position, block in enumerate(blocks):
-        if block.label not in HEADING_LABELS or block.page is None or block.page in ignored_pages:
-            continue
-        section_type = section_type_for(block.text)
-        if section_type is None or section_type.key in skip or section_type.key in starts:
-            continue
-        starts[section_type.key] = Start(
-            key=section_type.key,
-            heading=block.text.strip(),
-            page=block.page,
-            method="heading",
-            position=position,
-        )
-    return list(starts.values())
+        if position > 0 and block.page != blocks[position - 1].page:
+            top_of_page = True
+        is_heading = block.label in HEADING_LABELS
+        if is_heading and block.page is not None and block.page not in ignored_pages:
+            section_type = section_type_for(block.text)
+            inside_notes = notes_position is not None and position > notes_position
+            if (
+                section_type is not None
+                and section_type.key not in skip
+                and not (inside_notes and section_type.key != "notes")
+            ):
+                start = Start(
+                    key=section_type.key,
+                    heading=block.text.strip(),
+                    page=block.page,
+                    method="heading",
+                    position=position,
+                )
+                anywhere.setdefault(start.key, start)
+                if top_of_page:
+                    at_top.setdefault(start.key, start)
+        # Only headings and the running header/footer may come above a section's heading.
+        if not is_heading and block.label not in ("page_header", "page_footer"):
+            top_of_page = False
+    return [at_top.get(key, start) for key, start in anywhere.items()]
 
 
 def _first_position_on_or_after(blocks: list[Block], page: int) -> int:
@@ -348,18 +397,29 @@ def detect_sections(doc: dict, pdf_path: Path | None = None) -> dict:
 
     marks = bookmarks(pdf_path) if pdf_path is not None and pdf_path.is_file() else None
     starts = starts_from_bookmarks(marks or [], blocks)
-    found_by_bookmark = {start.key for start in starts}
-    starts += starts_from_headings(blocks, skip=found_by_bookmark)
+    found = {start.key for start in starts}
+    # Find where the notes start first, so the note titles inside them can be left out when
+    # looking for the other sections.
+    if "notes" not in found:
+        starts += starts_from_headings(blocks, skip=found | _all_keys_except("notes"))
+    notes = next((start for start in starts if start.key == "notes"), None)
+    found = {start.key for start in starts}
+    starts += starts_from_headings(
+        blocks, skip=found, notes_position=notes.position if notes else None
+    )
     starts.sort(key=lambda start: (start.page, start.position))
 
     # Each section ends on the page before the next section starts, or on that same page when
-    # the next one starts part-way down it. The last one runs to the end of the report.
+    # the next one starts part-way down it. The last one runs to the end of the report. A
+    # section found by bookmark may end earlier, where the next bookmark of any kind begins.
     ends: dict[str, int] = {}
     for current, following in zip(starts, starts[1:] + [None]):
-        if following is None:
-            ends[current.key] = pages
-        else:
-            ends[current.key] = max(current.page, following.page - 1)
+        end = pages if following is None else max(current.page, following.page - 1)
+        if current.method == "bookmark":
+            end_by_bookmark = bookmark_end(marks, current)
+            if end_by_bookmark is not None and current.page <= end_by_bookmark < end:
+                end = end_by_bookmark
+        ends[current.key] = end
 
     by_key = {start.key: start for start in starts}
     sections = []
@@ -383,6 +443,10 @@ def detect_sections(doc: dict, pdf_path: Path | None = None) -> dict:
         "sections": sections,
         "blocks": _tag_blocks(blocks, starts, ends),
     }
+
+
+def _all_keys_except(key: str) -> set[str]:
+    return {section_type.key for section_type in SECTION_TYPES if section_type.key != key}
 
 
 def _tag_blocks(blocks: list[Block], starts: list[Start], ends: dict[str, int]) -> list[dict]:

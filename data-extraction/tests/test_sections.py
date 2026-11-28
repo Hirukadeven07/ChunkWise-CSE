@@ -8,6 +8,7 @@ from section_docs import docling_doc, pdf_with_bookmarks
 from cse_extract.cli import main
 from cse_extract.sections import (
     SECTION_TYPES_IN_REPORT_ORDER,
+    Bookmark,
     bookmarks,
     detect_sections,
     normalise,
@@ -189,8 +190,57 @@ def test_page_headers_do_not_start_sections():
 @pytest.mark.parametrize("use_actions", [False, True])
 def test_bookmarks_are_read_from_the_pdf(tmp_path: Path, use_actions):
     pdf = tmp_path / "report.pdf"
-    pdf.write_bytes(pdf_with_bookmarks(5, [("Cover", 1), ("Chairman's Review", 3)], use_actions))
-    assert bookmarks(pdf) == [("Cover", 1), ("Chairman's Review", 3)]
+    pdf.write_bytes(
+        pdf_with_bookmarks(5, [("Cover", 1), ("_GoBack", 4), ("Chairman's Review", 3)], use_actions)
+    )
+    # The hidden "_GoBack" bookmark that word processors leave behind is dropped.
+    assert bookmarks(pdf) == [Bookmark("Cover", 1, 0), Bookmark("Chairman's Review", 3, 0)]
+
+
+def test_bookmarked_section_ends_where_the_next_bookmark_starts(tmp_path: Path):
+    # "Board of Directors" is not a section we look for, but its bookmark shows that the
+    # chairman's message ends on page 3, not just before risk management on page 5.
+    pdf = tmp_path / "report.pdf"
+    pdf.write_bytes(
+        pdf_with_bookmarks(9, [("Chairman's Message", 3), ("Board of Directors", 4), ("Risk Management", 5)])
+    )
+    doc = docling_doc([[("text", f"Page {n}")] for n in range(1, 10)])
+    sections = by_key(detect_sections(doc, pdf))
+    assert (sections["chairman_message"]["start_page"], sections["chairman_message"]["end_page"]) == (3, 3)
+    assert (sections["risk_management"]["start_page"], sections["risk_management"]["end_page"]) == (5, 9)
+
+
+def test_heading_at_the_top_of_a_page_beats_an_earlier_mid_page_one():
+    # Page 1 is a Directors' Report with a short "Auditors' Report" paragraph part-way down;
+    # the real auditor's report starts at the top of page 3.
+    doc = docling_doc(
+        [
+            [("section_header", "Annual Report of the Board of Directors"), ("text", "Principal activities ..."),
+             ("section_header", "Auditors' Report"), ("text", "Messrs KPMG were reappointed.")],
+            [("text", "More of the Directors' Report")],
+            [("page_header", "Annual Report 2021"), ("section_header", "Independent Auditor's Report"),
+             ("text", "Opinion")],
+        ]
+    )
+    auditor = by_key(detect_sections(doc))["auditor_report"]
+    assert (auditor["start_page"], auditor["heading"]) == (3, "Independent Auditor's Report")
+
+
+def test_mid_page_heading_is_used_when_there_is_no_better_one():
+    doc = docling_doc([[("text", "Intro"), ("section_header", "Risk Management"), ("text", "Risks")]])
+    assert by_key(detect_sections(doc))["risk_management"]["start_page"] == 1
+
+
+def test_note_titles_inside_the_notes_do_not_start_other_sections():
+    doc = docling_doc(
+        [
+            [("section_header", "Notes to the Financial Statements"), ("text", "1. Reporting entity")],
+            [("section_header", "27.2 Financial Risk Management"), ("text", "Credit risk ...")],
+        ]
+    )
+    sections = by_key(detect_sections(doc))
+    assert sections["risk_management"]["found"] is False
+    assert (sections["notes"]["start_page"], sections["notes"]["end_page"]) == (1, 2)
 
 
 def test_bookmarks_are_used_first_and_headings_fill_the_gaps(tmp_path: Path):
