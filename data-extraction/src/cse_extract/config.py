@@ -26,6 +26,15 @@ class DoclingSettings:
 
 
 @dataclass(frozen=True)
+class ValidationSettings:
+    """Checks run on each PDF before conversion (see validate.py)."""
+
+    enabled: bool = True
+    min_chars_per_page: int = 50
+    min_text_ratio: float = 0.5
+
+
+@dataclass(frozen=True)
 class Config:
     """Settings for one extraction run."""
 
@@ -33,6 +42,7 @@ class Config:
     output_dir: Path
     exclude_dirs: frozenset[str] = frozenset()
     docling: DoclingSettings = field(default_factory=DoclingSettings)
+    validation: ValidationSettings = field(default_factory=ValidationSettings)
 
 
 def load_config(path: str | Path) -> Config:
@@ -53,6 +63,7 @@ def load_config(path: str | Path) -> Config:
         output_dir=_path(raw, "output_dir", base),
         exclude_dirs=frozenset(str(name).lower() for name in raw.get("exclude_dirs") or []),
         docling=_docling(raw.get("docling") or {}),
+        validation=_validation(raw.get("validation") or {}),
     )
 
 
@@ -79,4 +90,22 @@ def _docling(raw: dict) -> DoclingSettings:
         raise ConfigError(
             f"docling.table_mode must be one of {', '.join(TABLE_MODES)}, not '{settings.table_mode}'"
         )
+    return settings
+
+
+def _validation(raw: dict) -> ValidationSettings:
+    if not isinstance(raw, dict):
+        raise ConfigError("'validation' must be a mapping of settings")
+    try:
+        settings = ValidationSettings(
+            enabled=bool(raw.get("enabled", True)),
+            min_chars_per_page=int(raw.get("min_chars_per_page", 50)),
+            min_text_ratio=float(raw.get("min_text_ratio", 0.5)),
+        )
+    except (TypeError, ValueError) as exc:
+        raise ConfigError(f"invalid validation setting: {exc}") from exc
+    if settings.min_chars_per_page < 0:
+        raise ConfigError("validation.min_chars_per_page cannot be negative")
+    if not 0 <= settings.min_text_ratio <= 1:
+        raise ConfigError("validation.min_text_ratio must be between 0 and 1")
     return settings
