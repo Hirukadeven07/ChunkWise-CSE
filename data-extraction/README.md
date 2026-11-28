@@ -38,10 +38,10 @@ Sections looked for: chairman's message, CEO / managing director's review, manag
 
 How a section's start is found, in this order:
 
-1. **PDF bookmarks**, when the PDF has them and is in `input_dir`. They are written by the company, so they are the most reliable.
-2. **Docling headings** (`title` and `section_header` items), matched against the different wordings reports use ("Chairman's Message", "Chairperson's Review", "Message from the Chairman", ...). Pages that mention three or more sections are treated as contents pages and ignored.
+1. **PDF bookmarks**, when the PDF has them and is in `input_dir`. They are written by the company, so they are the most reliable. Only a minority of CSE reports have useful ones.
+2. **Docling headings** (`title` and `section_header` items), matched against the different wordings reports use ("Chairman's Message", "Chairperson's Review", "Message from the Chairman", ...). Pages that mention three or more sections are treated as contents pages and ignored. A heading at the top of its page is preferred over an earlier one part-way down a page (such as an "Auditors' Report" paragraph inside the Directors' Report), and headings inside the notes to the financial statements (such as "27.2 Financial Risk Management") are not used for other sections.
 
-A section ends on the page before the next section found starts (or on the same page if the next one starts part-way down it); the last one runs to the end of the report. A section that is not found is recorded as missing, not as an error. Limits: a section without a heading or bookmark is not found, and a section followed by pages that are not one of the sections above (for example "Board of Directors") is given those pages too.
+A section ends on the page before the next section found starts (or on the same page if the next one starts part-way down it); the last one runs to the end of the report. A section found by bookmark ends earlier if the next bookmark of any kind (for example "Board of Directors") starts sooner. A section that is not found is recorded as missing, not as an error. Limits: a section without a heading or bookmark is not found, and a section found by its heading that is followed by pages that are not one of the sections above (for example "Board of Directors") is given those pages too.
 
 It writes, next to each report's JSON:
 
