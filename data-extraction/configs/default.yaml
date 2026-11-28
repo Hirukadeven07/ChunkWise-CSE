@@ -1,0 +1,17 @@
+# Settings for one extraction run. Relative paths are resolved from this file's folder.
+
+# Folder of annual report PDFs, in company sub-folders, for example
+# Annual Reports/N/NATIONS TRUST BANK PLC/nationstrustbankplc_2024.pdf
+input_dir: ../data/Annual Reports
+
+# Where the extracted JSON and Markdown go, in the same sub-folders as input_dir.
+output_dir: ../data/output
+
+# Sub-folders to skip at any depth (case-insensitive), for example interim reports.
+exclude_dirs: [interim]
+
+docling:
+  device: auto          # auto, cpu, cuda, mps or xpu
+  ocr: false            # scanned reports are out of scope
+  table_mode: accurate  # accurate or fast
+  layout_model: null    # a Docling layout preset such as layout_egret_large, or null for the default

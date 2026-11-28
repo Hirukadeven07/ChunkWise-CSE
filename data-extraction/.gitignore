@@ -1,0 +1,9 @@
+# Extraction outputs and local report copies stay out of git
+data/
+output/
+*.part
+*.pdf
+
+# Python
+*.egg-info/
+build/

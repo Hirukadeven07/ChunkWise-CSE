@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "cse-extract"
+version = "0.1.0"
+description = "Docling extraction of Colombo Stock Exchange annual reports for ChunkWise CSE."
+requires-python = ">=3.10"
+dependencies = [
+    "pyyaml",
+]
+
+[project.optional-dependencies]
+docling = ["docling"]
+dev = ["pytest"]
+
+[project.scripts]
+cse-extract = "cse_extract.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
